@@ -10,7 +10,7 @@ import CardTable from '../components/game/CardTable';
 // Hooks e Utils
 import { useMatch } from '../hooks/useMatch';
 import { useGameAI } from '../hooks/useGameAI';
-import { auth } from '../lib/firebase'; // Garanta que o caminho está correto
+import { auth } from '../lib/firebase';
 
 // --- ÍCONES SVG ---
 const IconBack = () => <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>;
@@ -24,53 +24,55 @@ const GameRoom = () => {
   const navigate = useNavigate();
   const gameContainerRef = useRef(null);
 
-  // --- LÓGICA DO JOGO ---
-  // Detecta se é IA Local baseado no state da navegação ou ID da URL
+  // --- LÓGICA DE IDENTIFICAÇÃO ---
   const isLocalAi = location.state?.mode === 'ai' || matchId?.startsWith('local-');
   const gameType = location.state?.gameType || 'chess';
   const difficulty = location.state?.difficulty || 'medium';
+  const currentUserId = auth.currentUser?.uid;
 
-  // Estados locais
+  // Estados Locais
   const [localGameState, setLocalGameState] = useState(null);
-  const [localTurn, setLocalTurn] = useState('PLAYER'); // PLAYER (White) ou AI_BOT (Black)
+  const [localTurn, setLocalTurn] = useState('PLAYER'); // PLAYER=White, AI=Black
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [gameKey, setGameKey] = useState(0);
 
-  // Hook Firebase (só executa se NÃO for IA e se houver usuário logado)
-  const currentUserId = auth.currentUser?.uid;
+  // Hook Firebase (Online)
   const firestoreMatch = useMatch(isLocalAi ? null : matchId, currentUserId); 
 
-  // Dados unificados
+  // --- DETERMINAÇÃO DE ESTADO E COR ---
   const currentGameState = isLocalAi ? localGameState : firestoreMatch.matchData?.gameState;
   
-  // Verifica turno
+  // Define minha cor:
+  // Se for Local: Eu sou sempre 'w' (Brancas)
+  // Se for Online: Busca no objeto players do Firestore qual cor foi atribuída ao meu ID
+  let myColor = 'w';
+  if (!isLocalAi && firestoreMatch?.matchData?.players?.[currentUserId]) {
+      myColor = firestoreMatch.matchData.players[currentUserId].color;
+  }
+
+  // Define de quem é a vez
   const isMyTurn = isLocalAi 
     ? localTurn === 'PLAYER' 
     : firestoreMatch.matchData?.currentTurn === currentUserId;
 
-  // Listener de Tela Cheia
+  // --- EFEITOS ---
   useEffect(() => {
     const handleChange = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener('fullscreenchange', handleChange);
     return () => document.removeEventListener('fullscreenchange', handleChange);
   }, []);
 
-  // --- Handler de Movimento (CRÍTICO) ---
+  // --- HANDLERS ---
   const handleMove = (newData) => {
     if (isLocalAi) {
       setLocalGameState(newData);
-      setLocalTurn('AI_BOT'); // Passa a vez para a IA
+      setLocalTurn('AI_BOT');
     } else {
-      // Modo Online: Calcula quem é o próximo jogador
+      // Lógica Online: Encontra o ID do oponente para passar a vez
       if (firestoreMatch?.matchData?.playerIds) {
-        const playerIds = firestoreMatch.matchData.playerIds;
-        // Encontra o ID que NÃO é o meu
-        const nextTurnId = playerIds.find(id => id !== currentUserId);
-        
+        const nextTurnId = firestoreMatch.matchData.playerIds.find(id => id !== currentUserId);
         if (nextTurnId) {
           firestoreMatch.makeMove(newData, nextTurnId); 
-        } else {
-          console.error("Erro: Não foi possível determinar o próximo turno.");
         }
       }
     }
@@ -92,7 +94,7 @@ const GameRoom = () => {
     }
   };
 
-  // Hook da IA (Só roda se for local)
+  // IA (Apenas Local)
   useGameAI(
     gameType, 
     difficulty, 
@@ -110,7 +112,8 @@ const GameRoom = () => {
         onMove: handleMove, 
         isMyTurn,
         difficulty,
-        isVsAi: isLocalAi // Passa essa prop para bloquear a IA no modo online
+        isVsAi: isLocalAi,
+        playerColor: myColor // Passa a cor para o tabuleiro saber se deve inverter
     };
 
     switch (gameType) {
@@ -124,7 +127,7 @@ const GameRoom = () => {
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col items-center justify-center p-4">
-      {/* Container do Jogo */}
+      {/* Container Principal */}
       <div 
         ref={gameContainerRef}
         className={`relative w-full max-w-5xl transition-all duration-300 ease-in-out bg-gray-900 border-gray-800 flex flex-col ${isFullscreen ? 'fixed inset-0 z-50 h-screen w-screen rounded-none border-none justify-center' : 'h-[80vh] rounded-xl shadow-2xl border'}`}
@@ -134,7 +137,7 @@ const GameRoom = () => {
            {isLocalAi ? (
              <span className="bg-purple-600/90 text-white px-3 py-1 rounded-full text-xs font-bold border border-purple-400/50 backdrop-blur-sm shadow-lg">IA: {difficulty}</span>
            ) : (
-             <span className="bg-blue-600/90 text-white px-3 py-1 rounded-full text-xs font-bold border border-blue-400/50 backdrop-blur-sm shadow-lg">ONLINE</span>
+             <span className="bg-blue-600/90 text-white px-3 py-1 rounded-full text-xs font-bold border border-blue-400/50 backdrop-blur-sm shadow-lg">ONLINE PvP</span>
            )}
         </div>
 
