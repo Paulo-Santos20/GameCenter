@@ -12,11 +12,8 @@ import { useMatch } from '../hooks/useMatch';
 import { useGameAI } from '../hooks/useGameAI';
 import { auth } from '../lib/firebase';
 
-// --- ÍCONES SVG ---
-const IconBack = () => <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>;
-const IconReplay = () => <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>;
-const IconEnterFull = () => <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>;
-const IconExitFull = () => <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>;
+// Ícones
+import { ArrowLeft, RefreshCw, Maximize, Minimize } from 'lucide-react';
 
 const GameRoom = () => {
   const { matchId } = useParams();
@@ -24,56 +21,48 @@ const GameRoom = () => {
   const navigate = useNavigate();
   const gameContainerRef = useRef(null);
 
-  // --- LÓGICA DE IDENTIFICAÇÃO ---
+  // --- LÓGICA DO JOGO ---
   const isLocalAi = location.state?.mode === 'ai' || matchId?.startsWith('local-');
   const gameType = location.state?.gameType || 'chess';
   const difficulty = location.state?.difficulty || 'medium';
   const currentUserId = auth.currentUser?.uid;
 
-  // Estados Locais
   const [localGameState, setLocalGameState] = useState(null);
-  const [localTurn, setLocalTurn] = useState('PLAYER'); // PLAYER=White, AI=Black
+  const [localTurn, setLocalTurn] = useState('PLAYER');
+  const [lastMove, setLastMove] = useState(null); // Armazena a última jogada para highlight
+  
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [gameKey, setGameKey] = useState(0);
 
-  // Hook Firebase (Online)
+  // Hook Firebase
   const firestoreMatch = useMatch(isLocalAi ? null : matchId, currentUserId); 
 
-  // --- DETERMINAÇÃO DE ESTADO E COR ---
   const currentGameState = isLocalAi ? localGameState : firestoreMatch.matchData?.gameState;
   
-  // Define minha cor:
-  // Se for Local: Eu sou sempre 'w' (Brancas)
-  // Se for Online: Busca no objeto players do Firestore qual cor foi atribuída ao meu ID
   let myColor = 'w';
   if (!isLocalAi && firestoreMatch?.matchData?.players?.[currentUserId]) {
       myColor = firestoreMatch.matchData.players[currentUserId].color;
   }
 
-  // Define de quem é a vez
   const isMyTurn = isLocalAi 
     ? localTurn === 'PLAYER' 
     : firestoreMatch.matchData?.currentTurn === currentUserId;
 
-  // --- EFEITOS ---
   useEffect(() => {
     const handleChange = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener('fullscreenchange', handleChange);
     return () => document.removeEventListener('fullscreenchange', handleChange);
   }, []);
 
-  // --- HANDLERS ---
-  const handleMove = (newData) => {
+  const handleMove = (newData, moveDetails) => {
     if (isLocalAi) {
       setLocalGameState(newData);
-      setLocalTurn('AI_BOT');
+      setLocalTurn(prev => prev === 'PLAYER' ? 'AI_BOT' : 'PLAYER');
+      if (moveDetails) setLastMove(moveDetails); // Atualiza highlight local
     } else {
-      // Lógica Online: Encontra o ID do oponente para passar a vez
       if (firestoreMatch?.matchData?.playerIds) {
         const nextTurnId = firestoreMatch.matchData.playerIds.find(id => id !== currentUserId);
-        if (nextTurnId) {
-          firestoreMatch.makeMove(newData, nextTurnId); 
-        }
+        if (nextTurnId) firestoreMatch.makeMove(newData, nextTurnId); 
       }
     }
   };
@@ -82,6 +71,7 @@ const GameRoom = () => {
     if (window.confirm("Reiniciar partida?")) {
       setLocalGameState(null);
       setLocalTurn('PLAYER');
+      setLastMove(null);
       setGameKey(p => p + 1);
     }
   };
@@ -94,26 +84,23 @@ const GameRoom = () => {
     }
   };
 
-  // IA (Apenas Local)
-  useGameAI(
-    gameType, 
-    difficulty, 
-    localGameState, 
-    (aiMove) => {
+  // Callback da IA
+  useGameAI(gameType, difficulty, localGameState, (aiMove, moveDetails) => {
       setLocalGameState(aiMove); 
       setLocalTurn('PLAYER');
-    }, 
-    localTurn 
+      if (moveDetails) setLastMove(moveDetails); // Highlight da IA
+    }, localTurn
   );
 
   const renderBoard = () => {
     const props = { 
         gameState: currentGameState, 
         onMove: handleMove, 
-        isMyTurn,
-        difficulty,
-        isVsAi: isLocalAi,
-        playerColor: myColor // Passa a cor para o tabuleiro saber se deve inverter
+        isMyTurn, 
+        difficulty, 
+        isVsAi: isLocalAi, 
+        playerColor: myColor,
+        externalLastMove: lastMove // Passa o highlight para o componente
     };
 
     switch (gameType) {
@@ -126,52 +113,47 @@ const GameRoom = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col items-center justify-center p-4">
-      {/* Container Principal */}
+    // Layout Flexbox Vertical que ocupa 100% da viewport (h-dvh)
+    <div className="h-dvh w-screen bg-slate-950 text-gray-100 flex flex-col overflow-hidden">
+      
       <div 
         ref={gameContainerRef}
-        className={`relative w-full max-w-5xl transition-all duration-300 ease-in-out bg-gray-900 border-gray-800 flex flex-col ${isFullscreen ? 'fixed inset-0 z-50 h-screen w-screen rounded-none border-none justify-center' : 'h-[80vh] rounded-xl shadow-2xl border'}`}
+        className={`
+          flex flex-col w-full h-full bg-slate-900 transition-all duration-300
+          ${isFullscreen ? 'fixed inset-0 z-50' : 'max-w-6xl mx-auto md:my-4 md:rounded-2xl shadow-2xl border border-slate-800'}
+        `}
       >
-        <div className="absolute top-4 left-0 right-0 flex justify-center items-center gap-3 z-10 pointer-events-none">
-           <h1 className="text-xl font-bold uppercase tracking-wider text-white drop-shadow-md bg-black/30 px-4 py-1 rounded-full backdrop-blur-sm">{gameType}</h1>
-           {isLocalAi ? (
-             <span className="bg-purple-600/90 text-white px-3 py-1 rounded-full text-xs font-bold border border-purple-400/50 backdrop-blur-sm shadow-lg">IA: {difficulty}</span>
-           ) : (
-             <span className="bg-blue-600/90 text-white px-3 py-1 rounded-full text-xs font-bold border border-blue-400/50 backdrop-blur-sm shadow-lg">ONLINE PvP</span>
-           )}
+        
+        {/* HEADER FIXO NO TOPO */}
+        <div className="shrink-0 bg-slate-800 border-b border-slate-700 p-3 md:p-4 flex justify-between items-center z-20 shadow-md">
+          <button onClick={() => navigate('/')} className="p-2 hover:bg-slate-700 rounded-full text-slate-400 hover:text-white transition-colors">
+            <ArrowLeft size={24} />
+          </button>
+
+          <div className="flex flex-col items-center">
+            <h1 className="text-lg md:text-xl font-black uppercase tracking-widest text-white drop-shadow-md">
+              {gameType}
+            </h1>
+            <div className="flex gap-2 mt-1">
+              <span className={`text-[10px] px-2 py-0.5 rounded border uppercase font-bold ${isLocalAi ? 'bg-purple-500/20 text-purple-300 border-purple-500/30' : 'bg-blue-500/20 text-blue-300 border-blue-500/30'}`}>
+                {isLocalAi ? `IA: ${difficulty}` : 'PvP Online'}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            {isLocalAi && <button onClick={handleReplay} className="p-2 hover:bg-slate-700 rounded-full text-slate-400 hover:text-emerald-400"><RefreshCw size={20} /></button>}
+            <button onClick={toggleFullscreen} className="p-2 hover:bg-slate-700 rounded-full text-slate-400 hover:text-white hidden md:block"><Maximize size={20} /></button>
+          </div>
         </div>
 
-        <div className="flex-1 flex items-center justify-center p-4 overflow-hidden" key={gameKey}>
+        {/* ÁREA DO TABULEIRO (Scrollável se necessário) */}
+        <div className="flex-1 flex items-center justify-center p-2 md:p-6 bg-slate-900/50 relative overflow-y-auto overflow-x-hidden w-full" key={gameKey}>
+            <div className="absolute inset-0 opacity-5 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle, #ffffff 1px, transparent 1px)', backgroundSize: '30px 30px' }}></div>
             {renderBoard()}
         </div>
 
-        {isFullscreen && (
-            <div className="absolute bottom-6 right-6 opacity-50 hover:opacity-100 transition-opacity pointer-events-auto z-50">
-                <button onClick={toggleFullscreen} className="bg-black/50 p-2 rounded-full text-white hover:bg-black/80 backdrop-blur"><IconExitFull /></button>
-            </div>
-        )}
       </div>
-
-      {/* Controles Externos */}
-      {!isFullscreen && (
-        <div className="w-full max-w-5xl mt-4 flex justify-between items-center bg-gray-800 p-3 rounded-xl shadow-lg border border-gray-700">
-          <div className="flex gap-3">
-            <button onClick={() => navigate('/')} className="flex items-center gap-2 px-4 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-700 transition-colors font-medium border border-transparent hover:border-gray-600">
-              <IconBack /> <span className="hidden sm:inline">Voltar</span>
-            </button>
-          </div>
-          <div className="flex gap-3">
-            {isLocalAi && (
-                <button onClick={handleReplay} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-700 text-teal-400 font-semibold hover:bg-gray-600 hover:-translate-y-0.5 transition-all shadow-sm">
-                <IconReplay /> <span className="hidden sm:inline">Rejogar</span>
-                </button>
-            )}
-            <button onClick={toggleFullscreen} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 hover:scale-105 hover:shadow-lg hover:shadow-purple-500/30 transition-all duration-200">
-              <IconEnterFull /> <span className="hidden sm:inline">Tela Cheia</span>
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
